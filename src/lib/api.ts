@@ -1,285 +1,382 @@
-import { supabase } from './supabase'
+import { supabase, type Room, type Participant, type Message, type Reaction, getDeviceId } from './supabase'
 
-export interface Chatroom {
-  id: string
-  host_id: string
-  link: string
-  expires_at: string
-  created_at: string
-}
+// Re-export types for convenience
+export type { Room, Participant, Message, Reaction }
 
-export interface User {
-  id: string
-  chatroom_id: string
-  nickname: string
-  joined_at: string
-}
-
-export interface Message {
-  id: string
-  chatroom_id: string
-  user_id: string
-  message_text?: string
-  media_url?: string
-  is_viewed: boolean
-  created_at: string
-  user?: User
-}
-
-export interface MediaFile {
-  id: string
-  message_id: string
-  file_url: string
-  file_type: 'image' | 'video'
-  is_viewed: boolean
-  created_at: string
-}
-
-// Generate a UUID for browser compatibility
-function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0
-    const v = c === 'x' ? r : (r & 0x3 | 0x8)
-    return v.toString(16)
-  })
-}
-
-// Create a new chatroom
-export async function createChatroom(): Promise<{ chatroom: Chatroom; link: string }> {
-  const hostId = generateUUID()
-  const link = generateRoomLink()
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours
-
-  const { data, error } = await supabase
-    .from('chatrooms')
+// Room Management
+export async function createRoom(name: string, emoji: string, nickname: string, avatar: string): Promise<{ room: Room; participant: Participant }> {
+  const deviceId = getDeviceId()
+  const adminId = crypto.randomUUID()
+  
+  // Generate unique room code
+  let roomCode = ''
+  let isUnique = false
+  
+  while (!isUnique) {
+    roomCode = Array.from({ length: 8 }, () => 
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[Math.floor(Math.random() * 36)]
+    ).join('')
+    
+    const { data: existing } = await supabase
+      .from('rooms')
+      .select('id')
+      .eq('room_code', roomCode)
+      .single()
+    
+    if (!existing) isUnique = true
+  }
+  
+  // Set expiry to 24 hours from now
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+  
+  // Create room
+  const { data: room, error: roomError } = await supabase
+    .from('rooms')
     .insert({
-      host_id: hostId,
-      link,
+      name,
+      emoji,
+      admin_id: adminId,
+      room_code: roomCode,
       expires_at: expiresAt
     })
     .select()
     .single()
-
-  if (error) throw error
-
-  return { chatroom: data, link }
-}
-
-// Generate a unique room link
-function generateRoomLink(): string {
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
-}
-
-// Join a chatroom with nickname
-export async function joinChatroom(link: string, nickname: string): Promise<{ user: User; chatroom: Chatroom }> {
-  // First, find the chatroom
-  const { data: chatroom, error: chatroomError } = await supabase
-    .from('chatrooms')
-    .select('*')
-    .eq('link', link)
+  
+  if (roomError) throw roomError
+  
+  // Create admin participant
+  const { data: participant, error: participantError } = await supabase
+    .from('participants')
+    .insert({
+      room_id: room.id,
+      device_id: deviceId,
+      nickname,
+      avatar,
+      is_admin: true
+    })
+    .select()
     .single()
+  
+  if (participantError) throw participantError
+  
+  return { room, participant }
+}
 
-  if (chatroomError) throw chatroomError
-
-  // Check if expired
-  if (new Date(chatroom.expires_at) < new Date()) {
-    throw new Error('Chatroom has expired')
+export async function joinRoom(roomCode: string, nickname: string, avatar: string): Promise<{ room: Room; participant: Participant }> {
+  const deviceId = getDeviceId()
+  
+  // Find room
+  const { data: room, error: roomError } = await supabase
+    .from('rooms')
+    .select('*')
+    .eq('room_code', roomCode)
+    .eq('is_active', true)
+    .single()
+  
+  if (roomError || !room) {
+    throw new Error('Room not found or expired')
   }
+  
+  // Check if room is expired
+  if (new Date(room.expires_at) < new Date()) {
+    throw new Error('Room has expired')
+  }
+  
+  // Check if user already exists in room
+  const { data: existingParticipant } = await supabase
+    .from('participants')
+    .select('*')
+    .eq('room_id', room.id)
+    .eq('device_id', deviceId)
+    .single()
+  
+  if (existingParticipant) {
+    return { room, participant: existingParticipant }
+  }
+  
+  // Create new participant
+  const { data: participant, error: participantError } = await supabase
+    .from('participants')
+    .insert({
+      room_id: room.id,
+      device_id: deviceId,
+      nickname,
+      avatar
+    })
+    .select()
+    .single()
+  
+  if (participantError) throw participantError
+  
+  return { room, participant }
+}
 
-  // Check if nickname is unique in the room
-  const { data: existingUser } = await supabase
-    .from('users')
+export async function getRoomByCode(roomCode: string): Promise<Room | null> {
+  const { data: room } = await supabase
+    .from('rooms')
+    .select('*')
+    .eq('room_code', roomCode)
+    .eq('is_active', true)
+    .single()
+  
+  return room
+}
+
+export async function getUserRooms(): Promise<Room[]> {
+  const deviceId = getDeviceId()
+  
+  const { data: rooms } = await supabase
+    .from('rooms')
+    .select(`
+      *,
+      participants!inner(device_id)
+    `)
+    .eq('participants.device_id', deviceId)
+    .eq('is_active', true)
+    .gte('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: false })
+  
+  return rooms || []
+}
+
+// Message Management
+export async function sendMessage(
+  roomId: string, 
+  content: string, 
+  messageType: 'text' | 'image' | 'video' = 'text',
+  mediaUrl?: string,
+  isViewOnce?: boolean,
+  replyToId?: string
+): Promise<Message> {
+  const deviceId = getDeviceId()
+  
+  // Get participant
+  const { data: participant } = await supabase
+    .from('participants')
     .select('id')
-    .eq('chatroom_id', chatroom.id)
-    .eq('nickname', nickname)
+    .eq('room_id', roomId)
+    .eq('device_id', deviceId)
     .single()
-
-  if (existingUser) {
-    throw new Error('Nickname already taken')
+  
+  if (!participant) {
+    throw new Error('You are not a participant in this room')
   }
-
-  // Create user
-  const { data: user, error: userError } = await supabase
-    .from('users')
-    .insert({
-      chatroom_id: chatroom.id,
-      nickname
-    })
-    .select()
-    .single()
-
-  if (userError) throw userError
-
-  return { user, chatroom }
-}
-
-// Send a message
-export async function sendMessage(chatroomId: string, userId: string, messageText?: string, file?: File): Promise<Message> {
-  let mediaUrl: string | undefined
-
-  // First, create the message
-  const { data: message, error: messageError } = await supabase
+  
+  const { data: message, error } = await supabase
     .from('messages')
     .insert({
-      chatroom_id: chatroomId,
-      user_id: userId,
-      message_text: messageText
+      room_id: roomId,
+      participant_id: participant.id,
+      content,
+      message_type: messageType,
+      media_url: mediaUrl,
+      is_view_once: isViewOnce || false,
+      reply_to_id: replyToId
     })
-    .select()
+    .select(`
+      *,
+      participant:participants(*),
+      reply_to:messages(
+        *,
+        participant:participants(*)
+      )
+    `)
     .single()
+  
+  if (error) throw error
+  return message
+}
 
-  if (messageError) throw messageError
-
-  // If file, upload and update message
-  if (file) {
-    const mediaFile = await uploadMedia(file, chatroomId, message.id)
-    mediaUrl = mediaFile.file_url
-
-    // Update message with media_url
-    const { error: updateError } = await supabase
-      .from('messages')
-      .update({ media_url: mediaUrl })
-      .eq('id', message.id)
-
-    if (updateError) throw updateError
-
-    message.media_url = mediaUrl
-  }
-
-  // Fetch with user
-  const { data: fullMessage, error: fetchError } = await supabase
+export async function getMessages(roomId: string): Promise<Message[]> {
+  const { data: messages } = await supabase
     .from('messages')
     .select(`
       *,
-      user:users(*)
+      participant:participants(*),
+      reply_to:messages(
+        *,
+        participant:participants(*)
+      ),
+      reactions(
+        *,
+        participant:participants(*)
+      )
     `)
-    .eq('id', message.id)
-    .single()
-
-  if (fetchError) throw fetchError
-
-  return fullMessage
-}
-
-// Get messages for a chatroom
-export async function getMessages(chatroomId: string): Promise<Message[]> {
-  const { data, error } = await supabase
-    .from('messages')
-    .select(`
-      *,
-      user:users(*)
-    `)
-    .eq('chatroom_id', chatroomId)
+    .eq('room_id', roomId)
     .order('created_at', { ascending: true })
-
-  if (error) throw error
-
-  return data
+  
+  return messages || []
 }
 
-// Upload media to Supabase Storage
-export async function uploadMedia(file: File, chatroomId: string, messageId: string): Promise<MediaFile> {
-  const fileExt = file.name.split('.').pop()
-  const fileName = `${generateUUID()}.${fileExt}`
-  const filePath = `media/${chatroomId}/${fileName}`
-
-  const { error } = await supabase.storage
-    .from('media')
-    .upload(filePath, file)
-
-  if (error) throw error
-
-  const { data } = supabase.storage
-    .from('media')
-    .getPublicUrl(filePath)
-
-  // Create media_files record
-  const { data: mediaFile, error: mediaError } = await supabase
-    .from('media_files')
-    .insert({
-      message_id: messageId,
-      file_url: data.publicUrl,
-      file_type: file.type.startsWith('image/') ? 'image' : 'video'
-    })
-    .select()
+export async function addReaction(messageId: string, emoji: string): Promise<void> {
+  const deviceId = getDeviceId()
+  
+  // Get participant from any room they're in (we'll validate they can access this message)
+  const { data: participant } = await supabase
+    .from('participants')
+    .select('id, room_id')
+    .eq('device_id', deviceId)
     .single()
-
-  if (mediaError) throw mediaError
-
-  return mediaFile
-}
-
-// Mark media as viewed and delete
-export async function markMediaViewed(mediaId: string): Promise<void> {
-  // First, get the media file
-  const { data: media, error: fetchError } = await supabase
-    .from('media_files')
-    .select('*')
-    .eq('id', mediaId)
+  
+  if (!participant) {
+    throw new Error('You are not a participant')
+  }
+  
+  // Check if reaction already exists
+  const { data: existing } = await supabase
+    .from('reactions')
+    .select('id')
+    .eq('message_id', messageId)
+    .eq('participant_id', participant.id)
+    .eq('emoji', emoji)
     .single()
-
-  if (fetchError) throw fetchError
-
-  // Mark as viewed
-  const { error: updateError } = await supabase
-    .from('media_files')
-    .update({ is_viewed: true })
-    .eq('id', mediaId)
-
-  if (updateError) throw updateError
-
-  // Extract file path from URL
-  const url = new URL(media.file_url)
-  const filePath = url.pathname.split('/').slice(-2).join('/') // media/chatroomId/filename
-
-  // Delete from storage
-  await supabase.storage
-    .from('media')
-    .remove([filePath])
+  
+  if (existing) {
+    // Remove reaction if it exists
+    await supabase
+      .from('reactions')
+      .delete()
+      .eq('id', existing.id)
+  } else {
+    // Add reaction
+    await supabase
+      .from('reactions')
+      .insert({
+        message_id: messageId,
+        participant_id: participant.id,
+        emoji
+      })
+  }
 }
 
-// Get chatroom by link
-export async function getChatroomByLink(link: string): Promise<Chatroom> {
-  const { data, error } = await supabase
-    .from('chatrooms')
-    .select('*')
-    .eq('link', link)
-    .single()
-
-  if (error) throw error
-
-  return data
-}
-
-// Subscribe to messages in a chatroom
-export function subscribeToMessages(chatroomId: string, callback: (message: Message) => void) {
-  const channel = supabase
-    .channel(`messages:${chatroomId}`)
+// Real-time subscriptions
+export function subscribeToMessages(roomId: string, onMessage: (message: Message) => void) {
+  return supabase
+    .channel(`room:${roomId}`)
     .on(
       'postgres_changes',
       {
         event: 'INSERT',
         schema: 'public',
         table: 'messages',
-        filter: `chatroom_id=eq.${chatroomId}`
+        filter: `room_id=eq.${roomId}`
       },
       async (payload) => {
-        // Fetch the full message with user
-        const { data: message, error } = await supabase
+        // Fetch the full message with relations
+        const { data: message } = await supabase
           .from('messages')
           .select(`
             *,
-            user:users(*)
+            participant:participants(*),
+            reply_to:messages(
+              *,
+              participant:participants(*)
+            ),
+            reactions(
+              *,
+              participant:participants(*)
+            )
           `)
           .eq('id', payload.new.id)
           .single()
-
-        if (!error && message) {
-          callback(message)
+        
+        if (message) {
+          onMessage(message)
         }
       }
     )
     .subscribe()
+}
 
-  return channel
+export function subscribeToReactions(roomId: string, onReaction: (reaction: any) => void) {
+  return supabase
+    .channel(`reactions:${roomId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'reactions'
+      },
+      async (payload: any) => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'DELETE') {
+          // Verify this reaction belongs to a message in our room
+          const messageId = payload.new?.message_id || payload.old?.message_id
+          if (messageId) {
+            const { data: message } = await supabase
+              .from('messages')
+              .select('room_id')
+              .eq('id', messageId)
+              .single()
+            
+            if (message?.room_id === roomId) {
+              const reactionData = payload.new || payload.old
+              onReaction({
+                ...reactionData,
+                eventType: payload.eventType
+              })
+            }
+          }
+        }
+      }
+    )
+    .subscribe()
+}
+
+// Admin functions
+export async function updateRoom(roomId: string, updates: { name?: string; emoji?: string }): Promise<void> {
+  const deviceId = getDeviceId()
+  
+  // Verify user is admin
+  const { data: participant } = await supabase
+    .from('participants')
+    .select('is_admin')
+    .eq('room_id', roomId)
+    .eq('device_id', deviceId)
+    .single()
+  
+  if (!participant?.is_admin) {
+    throw new Error('Only room admin can update room settings')
+  }
+  
+  const { error } = await supabase
+    .from('rooms')
+    .update(updates)
+    .eq('id', roomId)
+  
+  if (error) throw error
+}
+
+export async function kickParticipant(roomId: string, participantId: string): Promise<void> {
+  const deviceId = getDeviceId()
+  
+  // Verify user is admin
+  const { data: admin } = await supabase
+    .from('participants')
+    .select('is_admin')
+    .eq('room_id', roomId)
+    .eq('device_id', deviceId)
+    .single()
+  
+  if (!admin?.is_admin) {
+    throw new Error('Only room admin can kick participants')
+  }
+  
+  const { error } = await supabase
+    .from('participants')
+    .delete()
+    .eq('id', participantId)
+    .eq('room_id', roomId)
+  
+  if (error) throw error
+}
+
+export async function getRoomParticipants(roomId: string): Promise<Participant[]> {
+  const { data: participants } = await supabase
+    .from('participants')
+    .select('*')
+    .eq('room_id', roomId)
+    .order('joined_at', { ascending: true })
+  
+  return participants || []
 }
