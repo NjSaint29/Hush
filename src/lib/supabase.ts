@@ -37,6 +37,8 @@ export interface Message {
   media_url: string | null
   is_view_once: boolean
   reply_to_id: string | null
+  status: 'pending' | 'sent' | 'delivered' | 'viewed'
+  read_by: string[]
   created_at: string
   participant?: Participant
   reply_to?: Message
@@ -49,6 +51,23 @@ export interface Reaction {
   participant_id: string
   emoji: string
   created_at: string
+  participant?: Participant
+}
+
+export interface TypingIndicator {
+  id: string
+  room_id: string
+  participant_id: string
+  is_typing: boolean
+  last_updated: string
+  participant?: Participant
+}
+
+export interface MessageView {
+  id: string
+  message_id: string
+  participant_id: string
+  viewed_at: string
   participant?: Participant
 }
 

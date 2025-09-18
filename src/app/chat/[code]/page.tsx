@@ -4,67 +4,180 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
-import { 
-  getRoomByCode, 
-  joinRoom, 
-  getMessages, 
-  sendMessage, 
+import {
+  getRoomByCode,
+  joinRoom,
+  getMessages,
+  sendMessageWithStatus,
   subscribeToMessages,
   subscribeToReactions,
   addReaction,
   getRoomParticipants,
-  type Room, 
-  type Message, 
-  type Participant 
+  setTypingStatus,
+  getTypingIndicators,
+  subscribeToTypingIndicators,
+  markMessageAsRead,
+  markMessagesAsRead,
+  markMediaViewed,
+  pollMessages,
+  type Room,
+  type Message,
+  type Participant,
+  type TypingIndicator
 } from '@/lib/api'
 import { getUserProfile } from '@/lib/supabase'
+import { supabase } from '@/lib/supabase'
 
-function MessageBubble({ message, onReaction, onReply }: { 
+function MessageBubble({ message, onReaction, onReply, onLongPress, onSlideReply, onMediaView }: {
   message: Message
   onReaction: (emoji: string) => void
   onReply: () => void
+  onLongPress: (messageId: string) => void
+  onSlideReply: (message: Message) => void
+  onMediaView: (message: Message) => void
 }) {
   const [showReactions, setShowReactions] = useState(false)
+  const [touchStartX, setTouchStartX] = useState(0)
+  const [isSliding, setIsSliding] = useState(false)
+  const [swipeOffset, setSwipeOffset] = useState(0)
+  const [showQuickReactions, setShowQuickReactions] = useState(false)
   const isOwn = message.participant?.device_id === localStorage.getItem('hush_device_id')
 
   const reactions = ['👍', '❤️', '😂', '😮', '😢', '😡']
 
+  const handleTouchStart = (e: React.TouchEvent) => {
+    setTouchStartX(e.touches[0].clientX)
+    setSwipeOffset(0)
+  }
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const currentX = e.touches[0].clientX
+    const diff = currentX - touchStartX
+
+    // Only allow right swipe for reply
+    if (diff > 0) {
+      setSwipeOffset(Math.min(diff, 80)) // Max swipe distance
+      if (diff > 30) { // Minimum swipe distance to trigger
+        setIsSliding(true)
+      }
+    }
+  }
+
+  const handleTouchEnd = () => {
+    if (isSliding && swipeOffset > 50) {
+      onSlideReply(message)
+    }
+    setIsSliding(false)
+    setSwipeOffset(0)
+  }
+
+  const handleLongPress = () => {
+    // WhatsApp-style: show quick reaction menu instead of modal
+    setShowQuickReactions(true)
+    setTimeout(() => setShowQuickReactions(false), 3000) // Auto-hide after 3s
+  }
+
+  const handleQuickReaction = (emoji: string) => {
+    onReaction(emoji)
+    setShowQuickReactions(false)
+  }
+
   return (
-    <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-4`}>
-      <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-2xl ${
-        isOwn 
-          ? 'bg-teal-500 text-white' 
-          : 'bg-gray-800 text-gray-100'
-      }`}>
+    <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-4 relative`}>
+      {/* Reply indicator for swipe gesture */}
+      {isSliding && (
+        <div className="absolute left-0 top-1/2 transform -translate-y-1/2 z-10">
+          <div className="bg-blue-500 text-white rounded-full p-2 shadow-lg">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+            </svg>
+          </div>
+        </div>
+      )}
+
+      <div
+        className={`max-w-xs lg:max-w-md px-4 py-2 rounded-2xl relative transition-transform duration-200 ${
+          isOwn
+            ? 'bg-teal-500 text-white'
+            : 'bg-gray-800 text-gray-100'
+        } ${isSliding ? 'transform translate-x-16' : ''}`}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          handleLongPress()
+        }}
+        style={{
+          touchAction: 'pan-y',
+          transform: `translateX(${swipeOffset}px)`
+        }}
+      >
         {/* Reply indicator */}
         {message.reply_to && (
           <div className="text-xs opacity-75 mb-1 border-l-2 border-gray-600 pl-2">
-            {message.reply_to.content?.substring(0, 50)}...
+            <div className="text-xs font-medium">{message.reply_to.participant?.nickname}</div>
+            <div className="truncate">{message.reply_to.content?.substring(0, 50)}...</div>
           </div>
         )}
-        
+
         {/* Message content */}
         {message.content && (
           <p className="text-sm">{message.content}</p>
         )}
-        
+
         {/* Media */}
         {message.media_url && (
           <div className="mt-2">
-            <img 
-              src={message.media_url} 
-              alt="Media" 
-              className="rounded-lg max-w-full"
-            />
+            {message.is_view_once && !isOwn ? (
+              <div className="relative">
+                <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
+                  <button
+                    onClick={() => onMediaView(message)}
+                    className="bg-white text-black px-4 py-2 rounded-full font-medium"
+                  >
+                    👁️ Tap to view
+                  </button>
+                </div>
+                <div className="w-32 h-32 bg-gray-700 rounded-lg flex items-center justify-center">
+                  <span className="text-2xl">📷</span>
+                </div>
+              </div>
+            ) : (
+              <img
+                src={message.media_url}
+                alt="Media"
+                className="rounded-lg max-w-full cursor-pointer"
+                onClick={() => message.is_view_once && onMediaView(message)}
+              />
+            )}
           </div>
         )}
-        
-        {/* Message actions */}
+
+        {/* Message actions and timestamp */}
         <div className="flex items-center justify-between mt-1">
-          <span className="text-xs opacity-75">
-            {new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </span>
-          
+          <div className="flex items-center space-x-2">
+            <span className="text-xs opacity-75">
+              {new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+            {isOwn && (
+              <span className="text-xs opacity-75 ml-2 flex items-center">
+                {message.status === 'pending' && (
+                  <span className="animate-spin">🕐</span>
+                )}
+                {message.status === 'sent' && (
+                  <span className="text-gray-300">✓</span>
+                )}
+                {message.status === 'delivered' && (
+                  <span className="text-gray-300">✓✓</span>
+                )}
+                {message.status === 'viewed' && (
+                  <span className="text-blue-400">✓✓</span>
+                )}
+              </span>
+            )}
+          </div>
+
           {!isOwn && (
             <div className="flex space-x-1">
               <button
@@ -82,7 +195,7 @@ function MessageBubble({ message, onReaction, onReply }: {
             </div>
           )}
         </div>
-        
+
         {/* Reaction picker */}
         {showReactions && (
           <div className="flex space-x-1 mt-2">
@@ -100,18 +213,47 @@ function MessageBubble({ message, onReaction, onReply }: {
             ))}
           </div>
         )}
-        
+
         {/* Message reactions */}
         {message.reactions && message.reactions.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-2">
             {message.reactions.map(reaction => (
               <span key={reaction.id} className="text-sm bg-gray-700 rounded-full px-2 py-1">
-                {reaction.emoji}
+                {reaction.emoji} {reaction.participant ? 1 : ''}
               </span>
             ))}
           </div>
         )}
       </div>
+
+      {/* WhatsApp-style Quick Reactions Menu */}
+      {showQuickReactions && (
+        <div className="absolute -top-12 left-1/2 transform -translate-x-1/2 z-20">
+          <div className="bg-gray-900 rounded-full p-2 shadow-lg border border-gray-700 flex space-x-1">
+            {['👍', '❤️', '😂', '😮', '😢', '😡'].map(emoji => (
+              <button
+                key={emoji}
+                onClick={() => handleQuickReaction(emoji)}
+                className="w-8 h-8 hover:scale-125 transition-transform rounded-full hover:bg-gray-800 flex items-center justify-center text-lg"
+              >
+                {emoji}
+              </button>
+            ))}
+            <div className="w-px h-6 bg-gray-600 mx-1"></div>
+            <button
+              onClick={() => {
+                setShowQuickReactions(false)
+                onLongPress(message.id) // Open full reaction picker
+              }}
+              className="w-8 h-8 hover:scale-125 transition-transform rounded-full hover:bg-gray-800 flex items-center justify-center text-gray-400"
+            >
+              ➕
+            </button>
+          </div>
+          {/* Arrow pointing to message */}
+          <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+        </div>
+      )}
     </div>
   )
 }
@@ -129,6 +271,14 @@ export default function ChatRoom() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showParticipants, setShowParticipants] = useState(false)
+  const [typingIndicators, setTypingIndicators] = useState<TypingIndicator[]>([])
+  const [isTyping, setIsTyping] = useState(false)
+  const [lastMessageId, setLastMessageId] = useState<string>('')
+  const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null)
+  const [viewedMessages, setViewedMessages] = useState<Set<string>>(new Set())
+  const [uploadingMedia, setUploadingMedia] = useState(false)
+  const [showMediaOptions, setShowMediaOptions] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messageSubscription = useRef<any>(null)
@@ -146,6 +296,57 @@ export default function ChatRoom() {
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  // Typing indicators
+  useEffect(() => {
+    if (!room) return
+
+    const typingSubscription = subscribeToTypingIndicators(room.id, (indicators) => {
+      setTypingIndicators(indicators)
+    })
+
+    return () => {
+      typingSubscription.unsubscribe()
+    }
+  }, [room])
+
+  // AJAX polling fallback
+  useEffect(() => {
+    if (!room) return
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const newMessages = await pollMessages(room.id, lastMessageId)
+        if (newMessages.length > 0) {
+          setMessages(prev => {
+            const existingIds = new Set(prev.map(m => m.id))
+            const filtered = newMessages.filter(m => !existingIds.has(m.id))
+            return [...prev, ...filtered]
+          })
+          setLastMessageId(newMessages[newMessages.length - 1].id)
+        }
+      } catch (err) {
+        console.error('Polling failed:', err)
+      }
+    }, 3000) // Poll every 3 seconds
+
+    return () => clearInterval(pollInterval)
+  }, [room, lastMessageId])
+
+  // Mark messages as read when they come into view
+  useEffect(() => {
+    if (!room) return
+
+    const markAsRead = async () => {
+      try {
+        await markMessagesAsRead(room.id)
+      } catch (err) {
+        console.error('Failed to mark messages as read:', err)
+      }
+    }
+
+    markAsRead()
+  }, [messages, room])
 
   const initializeChat = async () => {
     try {
@@ -211,21 +412,200 @@ export default function ChatRoom() {
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !room) return
 
+    const messageContent = newMessage.trim()
+    const replyId = replyTo?.id
+
+    // Clear input immediately for better UX
+    setNewMessage('')
+    setReplyTo(null)
+
+    // Stop typing indicator
+    if (isTyping && room) {
+      await setTypingStatus(room.id, false)
+      setIsTyping(false)
+    }
+
     try {
-      await sendMessage(
-        room.id, 
-        newMessage.trim(), 
-        'text', 
-        undefined, 
+      // Optimistic UI: Message appears instantly with pending status
+      const tempMessage: Message = {
+        id: `temp-${Date.now()}`,
+        room_id: room.id,
+        participant_id: localStorage.getItem('hush_device_id') || '',
+        content: messageContent,
+        message_type: 'text',
+        media_url: null,
+        is_view_once: false,
+        reply_to_id: replyId || null,
+        status: 'pending',
+        read_by: [],
+        created_at: new Date().toISOString(),
+        participant: {
+          id: localStorage.getItem('hush_device_id') || '',
+          room_id: room.id,
+          device_id: localStorage.getItem('hush_device_id') || '',
+          nickname: getUserProfile()?.nickname || 'You',
+          avatar: getUserProfile()?.avatar || '👤',
+          is_admin: false,
+          joined_at: new Date().toISOString(),
+          last_seen: new Date().toISOString()
+        }
+      }
+
+      // Add to local state immediately
+      setMessages(prev => [...prev, tempMessage])
+
+      // Send to server asynchronously
+      const sentMessage = await sendMessageWithStatus(
+        room.id,
+        messageContent,
+        'text',
+        undefined,
         false,
-        replyTo?.id
+        replyId
       )
-      setNewMessage('')
-      setReplyTo(null)
+
+      // Replace temp message with real one
+      setMessages(prev => prev.map(msg =>
+        msg.id === tempMessage.id ? sentMessage : msg
+      ))
+
     } catch (err: any) {
+      // Remove failed message and show error
+      setMessages(prev => prev.filter(msg => !msg.id.startsWith('temp-')))
       setError(err.message || 'Failed to send message')
+
+      // Restore input for retry
+      setNewMessage(messageContent)
+      if (replyId) {
+        // Find and restore reply context
+        const replyMessage = messages.find(m => m.id === replyId)
+        if (replyMessage) setReplyTo(replyMessage)
+      }
     }
   }
+
+  const handleInputChange = async (value: string) => {
+    setNewMessage(value)
+
+    if (!room) return
+
+    // Handle typing indicator
+    const shouldBeTyping = value.length > 0
+    if (shouldBeTyping !== isTyping) {
+      try {
+        await setTypingStatus(room.id, shouldBeTyping)
+        setIsTyping(shouldBeTyping)
+      } catch (err) {
+        console.error('Failed to update typing status:', err)
+      }
+    }
+  }
+
+  const handleMessageLongPress = (messageId: string) => {
+    setShowReactionPicker(messageId)
+  }
+
+  const handleReactionSelect = async (messageId: string, emoji: string) => {
+    try {
+      await addReaction(messageId, emoji)
+      setShowReactionPicker(null)
+    } catch (err) {
+      console.error('Failed to add reaction:', err)
+    }
+  }
+
+  const handleSlideToReply = (message: Message) => {
+    setReplyTo(message)
+  }
+
+  const handleMediaView = async (message: Message) => {
+    if (message.is_view_once && !viewedMessages.has(message.id)) {
+      try {
+        await markMediaViewed(message.id)
+        setViewedMessages(prev => new Set([...prev, message.id]))
+      } catch (err) {
+        console.error('Failed to mark media as viewed:', err)
+      }
+    }
+  }
+
+  const handleFileUpload = async (file: File, isViewOnce: boolean = false) => {
+    if (!room) return
+
+    setUploadingMedia(true)
+    try {
+      // Upload file to Supabase Storage
+      const fileExt = file.name.split('.').pop()
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`
+      const filePath = `chat-media/${room.id}/${fileName}`
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('media')
+        .upload(filePath, file)
+
+      if (uploadError) throw uploadError
+
+      // Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('media')
+        .getPublicUrl(filePath)
+
+      // Determine message type
+      const messageType = file.type.startsWith('image/') ? 'image' : 'video'
+
+      // Send message with media
+      await sendMessageWithStatus(
+        room.id,
+        '', // No text content for media messages
+        messageType,
+        publicUrl,
+        isViewOnce,
+        replyTo?.id
+      )
+
+      setReplyTo(null)
+    } catch (err: any) {
+      setError(err.message || 'Failed to upload media')
+    } finally {
+      setUploadingMedia(false)
+    }
+  }
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    // Validate file type
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+      setError('Please select an image or video file')
+      return
+    }
+
+    // Validate file size (10MB limit)
+    if (file.size > 10 * 1024 * 1024) {
+      setError('File size must be less than 10MB')
+      return
+    }
+
+    // Get view-once flag from data attribute
+    const isViewOnce = event.target.getAttribute('data-view-once') === 'true'
+
+    handleFileUpload(file, isViewOnce)
+    event.target.value = '' // Reset input
+    event.target.removeAttribute('data-view-once') // Clean up
+  }
+
+  const handleMediaButtonClick = () => {
+    setShowMediaOptions(true)
+  }
+
+  const handleMediaOptionSelect = (isViewOnce: boolean) => {
+    setShowMediaOptions(false)
+    // We'll implement this when we add the media options modal
+    fileInputRef.current?.setAttribute('data-view-once', isViewOnce.toString())
+    fileInputRef.current?.click()
+  }
+
 
   const handleReaction = async (messageId: string, emoji: string) => {
     try {
@@ -296,20 +676,55 @@ export default function ChatRoom() {
             message={message}
             onReaction={(emoji) => handleReaction(message.id, emoji)}
             onReply={() => setReplyTo(message)}
+            onLongPress={handleMessageLongPress}
+            onSlideReply={handleSlideToReply}
+            onMediaView={handleMediaView}
           />
         ))}
+
+        {/* Typing indicators */}
+        {typingIndicators.length > 0 && (
+          <div className="flex items-center space-x-2 text-gray-400 text-sm">
+            <div className="flex space-x-1">
+              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+            </div>
+            <span>
+              {typingIndicators.length === 1
+                ? `${typingIndicators[0].participant?.nickname || 'Someone'} is typing...`
+                : `${typingIndicators.length} people are typing...`
+              }
+            </span>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Reply indicator */}
+      {/* WhatsApp-style Reply Preview */}
       {replyTo && (
-        <div className="px-4 py-2 bg-gray-800 border-t border-gray-700">
-          <div className="flex items-center justify-between">
-            <div className="flex-1">
-              <p className="text-xs text-gray-400">Replying to {replyTo.participant?.nickname}</p>
-              <p className="text-sm text-gray-300 truncate">{replyTo.content}</p>
+        <div className="px-4 py-3 bg-gray-800 border-t border-gray-700 border-l-4 border-l-blue-500">
+          <div className="flex items-start justify-between">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center space-x-2 mb-1">
+                <div className="w-3 h-3 bg-blue-500 rounded-full flex items-center justify-center">
+                  <svg className="w-2 h-2 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                  </svg>
+                </div>
+                <p className="text-sm font-medium text-blue-400">
+                  Replying to {replyTo.participant?.nickname}
+                </p>
+              </div>
+              <div className="text-sm text-gray-300 truncate">
+                {replyTo.content || (replyTo.media_url ? '📷 Photo' : 'Media')}
+              </div>
             </div>
-            <button onClick={() => setReplyTo(null)} className="text-gray-400 hover:text-gray-200">
+            <button
+              onClick={() => setReplyTo(null)}
+              className="text-gray-400 hover:text-gray-200 ml-2 flex-shrink-0"
+            >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -320,17 +735,42 @@ export default function ChatRoom() {
 
       {/* Message Input */}
       <div className="bg-gray-900 border-t border-gray-800 p-4">
-        <div className="flex space-x-3">
+        <div className="flex space-x-3 items-end">
+          {/* Media Upload Button */}
+          <button
+            onClick={handleMediaButtonClick}
+            disabled={uploadingMedia}
+            className="p-3 bg-gray-800 border border-gray-700 rounded-full text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors disabled:opacity-50"
+            title="Upload media"
+          >
+            {uploadingMedia ? (
+              <div className="w-5 h-5 animate-spin rounded-full border-2 border-gray-400 border-t-transparent"></div>
+            ) : (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              </svg>
+            )}
+          </button>
+
+          {/* Hidden File Input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,video/*"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+
           <input
             value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
+            onChange={(e) => handleInputChange(e.target.value)}
             placeholder="Type a message..."
             className="flex-1 px-4 py-3 bg-gray-800 border border-gray-700 rounded-full text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-teal-500"
             onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
           />
           <Button
             onClick={handleSendMessage}
-            disabled={!newMessage.trim()}
+            disabled={!newMessage.trim() || uploadingMedia}
             className="rounded-full px-6"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -360,6 +800,64 @@ export default function ChatRoom() {
               </div>
             </div>
           ))}
+        </div>
+      </Modal>
+
+      {/* Reaction Picker Modal */}
+      <Modal
+        isOpen={!!showReactionPicker}
+        onClose={() => setShowReactionPicker(null)}
+        title="Add Reaction"
+      >
+        <div className="grid grid-cols-6 gap-3">
+          {['👍', '❤️', '😂', '😮', '😢', '😡', '🔥', '👏', '🤔', '😍', '🙌', '💯'].map(emoji => (
+            <button
+              key={emoji}
+              onClick={() => showReactionPicker && handleReactionSelect(showReactionPicker, emoji)}
+              className="text-2xl hover:scale-110 transition-transform p-3 bg-gray-800 rounded-lg hover:bg-gray-700"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      </Modal>
+
+      {/* Media Options Modal */}
+      <Modal
+        isOpen={showMediaOptions}
+        onClose={() => setShowMediaOptions(false)}
+        title="Share Media"
+      >
+        <div className="space-y-4">
+          <button
+            onClick={() => handleMediaOptionSelect(false)}
+            className="w-full p-4 bg-gray-800 rounded-lg hover:bg-gray-700 transition-colors text-left"
+          >
+            <div className="flex items-center space-x-3">
+              <div className="text-2xl">📷</div>
+              <div>
+                <div className="font-medium text-gray-100">Regular Media</div>
+                <div className="text-sm text-gray-400">Visible to all participants</div>
+              </div>
+            </div>
+          </button>
+
+          <button
+            onClick={() => handleMediaOptionSelect(true)}
+            className="w-full p-4 bg-gray-800 rounded-lg hover:bg-gray-700 transition-colors text-left"
+          >
+            <div className="flex items-center space-x-3">
+              <div className="text-2xl">👁️</div>
+              <div>
+                <div className="font-medium text-gray-100">View-Once Media</div>
+                <div className="text-sm text-gray-400">Disappears after viewing</div>
+              </div>
+            </div>
+          </button>
+
+          <div className="text-xs text-gray-500 text-center">
+            Supports images and videos up to 10MB
+          </div>
         </div>
       </Modal>
     </div>

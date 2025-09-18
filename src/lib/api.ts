@@ -1,7 +1,7 @@
-import { supabase, type Room, type Participant, type Message, type Reaction, getDeviceId } from './supabase'
+import { supabase, type Room, type Participant, type Message, type Reaction, type TypingIndicator, type MessageView, getDeviceId } from './supabase'
 
 // Re-export types for convenience
-export type { Room, Participant, Message, Reaction }
+export type { Room, Participant, Message, Reaction, TypingIndicator, MessageView }
 
 // Room Management
 export async function createRoom(name: string, emoji: string, nickname: string, avatar: string): Promise<{ room: Room; participant: Participant }> {
@@ -377,6 +377,194 @@ export async function getRoomParticipants(roomId: string): Promise<Participant[]
     .select('*')
     .eq('room_id', roomId)
     .order('joined_at', { ascending: true })
-  
+
   return participants || []
+}
+
+// Enhanced Features API Functions
+
+// Typing Indicators
+export async function setTypingStatus(roomId: string, isTyping: boolean): Promise<void> {
+  const deviceId = getDeviceId()
+
+  // Get participant
+  const { data: participant } = await supabase
+    .from('participants')
+    .select('id')
+    .eq('room_id', roomId)
+    .eq('device_id', deviceId)
+    .single()
+
+  if (!participant) {
+    throw new Error('You are not a participant in this room')
+  }
+
+  const { error } = await supabase.rpc('set_typing_status', {
+    room_uuid: roomId,
+    participant_uuid: participant.id,
+    typing: isTyping
+  })
+
+  if (error) throw error
+}
+
+export async function getTypingIndicators(roomId: string): Promise<TypingIndicator[]> {
+  const { data: typingIndicators } = await supabase.rpc('get_active_typing', {
+    room_uuid: roomId
+  })
+
+  return typingIndicators || []
+}
+
+export function subscribeToTypingIndicators(roomId: string, onTypingChange: (indicators: TypingIndicator[]) => void) {
+  return supabase
+    .channel(`typing:${roomId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'typing_indicators'
+      },
+      async () => {
+        // Fetch current typing indicators
+        const indicators = await getTypingIndicators(roomId)
+        onTypingChange(indicators)
+      }
+    )
+    .subscribe()
+}
+
+// Message Status and Read Tracking
+export async function updateMessageStatus(messageId: string, status: 'pending' | 'sent' | 'delivered' | 'viewed'): Promise<void> {
+  const { error } = await supabase.rpc('update_message_status', {
+    msg_id: messageId,
+    new_status: status
+  })
+
+  if (error) throw error
+}
+
+export async function markMessageAsRead(messageId: string): Promise<void> {
+  const deviceId = getDeviceId()
+
+  // Get participant from any room
+  const { data: participant } = await supabase
+    .from('participants')
+    .select('id')
+    .eq('device_id', deviceId)
+    .single()
+
+  if (!participant) {
+    throw new Error('You are not a participant')
+  }
+
+  const { error } = await supabase.rpc('mark_message_read', {
+    msg_id: messageId,
+    participant_uuid: participant.id
+  })
+
+  if (error) throw error
+}
+
+export async function markMessagesAsRead(roomId: string): Promise<void> {
+  const deviceId = getDeviceId()
+
+  // Get participant
+  const { data: participant } = await supabase
+    .from('participants')
+    .select('id')
+    .eq('room_id', roomId)
+    .eq('device_id', deviceId)
+    .single()
+
+  if (!participant) return
+
+  // Get unread messages
+  const { data: unreadMessages } = await supabase
+    .from('messages')
+    .select('id')
+    .eq('room_id', roomId)
+    .not('read_by', 'cs', `{${participant.id}}`)
+
+  if (unreadMessages) {
+    for (const message of unreadMessages) {
+      await markMessageAsRead(message.id)
+    }
+  }
+}
+
+// View-once Media
+export async function markMediaViewed(messageId: string): Promise<void> {
+  const deviceId = getDeviceId()
+
+  // Get participant
+  const { data: participant } = await supabase
+    .from('participants')
+    .select('id')
+    .eq('device_id', deviceId)
+    .single()
+
+  if (!participant) return
+
+  // Check if message is view-once
+  const { data: message } = await supabase
+    .from('messages')
+    .select('is_view_once')
+    .eq('id', messageId)
+    .single()
+
+  if (message?.is_view_once) {
+    // Mark as viewed
+    await markMessageAsRead(messageId)
+
+    // For view-once media, we could delete the media URL after viewing
+    // But for now, we'll just track the view
+  }
+}
+
+// Enhanced Message Sending with Status
+export async function sendMessageWithStatus(
+  roomId: string,
+  content: string,
+  messageType: 'text' | 'image' | 'video' = 'text',
+  mediaUrl?: string,
+  isViewOnce?: boolean,
+  replyToId?: string
+): Promise<Message> {
+  // First create message with pending status
+  const message = await sendMessage(roomId, content, messageType, mediaUrl, isViewOnce, replyToId)
+
+  // Update status to sent
+  await updateMessageStatus(message.id, 'sent')
+
+  return message
+}
+
+// AJAX Polling for Messages (fallback for when real-time fails)
+export async function pollMessages(roomId: string, lastMessageId?: string): Promise<Message[]> {
+  let query = supabase
+    .from('messages')
+    .select(`
+      *,
+      participant:participants(*),
+      reply_to:messages(
+        *,
+        participant:participants(*)
+      ),
+      reactions(
+        *,
+        participant:participants(*)
+      )
+    `)
+    .eq('room_id', roomId)
+    .order('created_at', { ascending: true })
+
+  if (lastMessageId) {
+    query = query.gt('id', lastMessageId)
+  }
+
+  const { data: messages } = await query
+
+  return messages || []
 }
