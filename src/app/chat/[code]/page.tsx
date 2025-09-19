@@ -20,6 +20,7 @@ import {
   markMessagesAsRead,
   markMediaViewed,
   getSignedMediaUrl,
+  hasViewedMedia,
   pollMessages,
   type Room,
   type Message,
@@ -29,13 +30,14 @@ import {
 import { getUserProfile } from '@/lib/supabase'
 import { supabase } from '@/lib/supabase'
 
-function MessageBubble({ message, onReaction, onReply, onLongPress, onSlideReply, onMediaView }: {
+function MessageBubble({ message, onReaction, onReply, onLongPress, onSlideReply, onMediaView, viewedMessages }: {
   message: Message
   onReaction: (emoji: string) => void
   onReply: () => void
   onLongPress: (messageId: string) => void
   onSlideReply: (message: Message) => void
   onMediaView: (message: Message) => void
+  viewedMessages: Set<string>
 }) {
   const [showReactions, setShowReactions] = useState(false)
   const [touchStartX, setTouchStartX] = useState(0)
@@ -138,32 +140,44 @@ function MessageBubble({ message, onReaction, onReply, onLongPress, onSlideReply
                   <span className="text-xs text-gray-400">Uploading...</span>
                 </div>
               </div>
-            ) : message.is_view_once && !isOwn ? (
-              // View-once media for other users
+            ) : message.is_view_once ? (
+              // View-once media - always show placeholder
               <div className="relative">
-                <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
-                  <button
-                    onClick={() => onMediaView(message)}
-                    className="bg-white text-black px-4 py-2 rounded-full font-medium hover:bg-gray-100 transition-colors"
-                  >
-                    👁️ Tap to view
-                  </button>
-                </div>
-                <div className="w-32 h-32 bg-gray-700 rounded-lg flex items-center justify-center">
-                  <span className="text-2xl">
-                    {message.message_type === 'image' ? '📷' : '🎥'}
-                  </span>
-                </div>
+                {viewedMessages.has(message.id) ? (
+                  // Already viewed - show consumed state
+                  <div className="w-32 h-32 bg-gray-800 rounded-lg flex items-center justify-center border-2 border-gray-600">
+                    <div className="text-center">
+                      <span className="text-2xl">👁️‍🗨️</span>
+                      <p className="text-xs text-gray-500 mt-1">Viewed</p>
+                    </div>
+                  </div>
+                ) : (
+                  // Not viewed - show tap to view
+                  <div className="relative cursor-pointer" onClick={() => onMediaView(message)}>
+                    <div className="w-32 h-32 bg-gray-700 rounded-lg flex items-center justify-center border-2 border-gray-600 hover:border-gray-500 transition-colors">
+                      <div className="text-center">
+                        <span className="text-2xl">
+                          {message.message_type === 'image' ? '📷' : '🎥'}
+                        </span>
+                        <p className="text-xs text-gray-400 mt-1">Tap to view</p>
+                      </div>
+                    </div>
+                    {isOwn && (
+                      <div className="absolute top-1 right-1 bg-red-500 text-white text-xs px-1.5 py-0.5 rounded">
+                        👁️
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
-              // Regular media display
+              // Regular media display (non-view-once)
               <div className="relative">
                 {message.message_type === 'image' ? (
                   <img
                     src={message.media_url}
                     alt="Shared media"
                     className="rounded-lg max-w-full cursor-pointer hover:opacity-90 transition-opacity"
-                    onClick={() => message.is_view_once && onMediaView(message)}
                     loading="lazy"
                   />
                 ) : (
@@ -173,11 +187,6 @@ function MessageBubble({ message, onReaction, onReply, onLongPress, onSlideReply
                     className="rounded-lg max-w-full"
                     preload="metadata"
                   />
-                )}
-                {message.is_view_once && isOwn && (
-                  <div className="absolute top-2 right-2 bg-black bg-opacity-75 text-white text-xs px-2 py-1 rounded">
-                    👁️ View-once
-                  </div>
                 )}
               </div>
             )}
@@ -308,6 +317,7 @@ export default function ChatRoom() {
   const [viewedMessages, setViewedMessages] = useState<Set<string>>(new Set())
   const [uploadingMedia, setUploadingMedia] = useState(false)
   const [showMediaOptions, setShowMediaOptions] = useState(false)
+  const [viewOnceMedia, setViewOnceMedia] = useState<{ message: Message; signedUrl: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -549,34 +559,64 @@ export default function ChatRoom() {
   }
 
   const handleMediaView = async (message: Message) => {
-    if (message.is_view_once && !viewedMessages.has(message.id)) {
-      try {
-        // For view-once media, generate a signed URL with short expiry
-        if (message.media_url) {
-          const urlParts = message.media_url.split('/')
-          const fileName = urlParts[urlParts.length - 1]
+    if (!message.is_view_once) return
 
-          // Generate signed URL valid for 60 seconds
-          const signedUrl = await getSignedMediaUrl(fileName, 60)
-
-          if (signedUrl) {
-            // Replace the public URL with signed URL temporarily
-            const updatedMessage = { ...message, media_url: signedUrl }
-            setMessages(prev => prev.map(msg =>
-              msg.id === message.id ? updatedMessage : msg
-            ))
-
-            // Mark as viewed after a short delay to allow viewing
-            setTimeout(async () => {
-              await markMediaViewed(message.id)
-              setViewedMessages(prev => new Set([...prev, message.id]))
-            }, 2000) // 2 second delay to allow viewing
-          }
-        }
-      } catch (err) {
-        console.error('Failed to handle view-once media:', err)
-      }
+    // Double-check if already viewed (both local state and server)
+    if (viewedMessages.has(message.id)) {
+      console.log('Media already viewed locally')
+      return
     }
+
+    try {
+      // Check server-side if already viewed
+      const alreadyViewed = await hasViewedMedia(message.id)
+      if (alreadyViewed) {
+        console.log('Media already viewed on server')
+        setViewedMessages(prev => new Set([...prev, message.id]))
+        return
+      }
+
+      // Generate signed URL for secure, temporary access
+      const urlParts = message.media_url!.split('/')
+      const fileName = urlParts[urlParts.length - 1]
+
+      // Generate signed URL valid for only 30 seconds
+      const signedUrl = await getSignedMediaUrl(fileName, 30)
+
+      if (!signedUrl) {
+        throw new Error('Failed to generate secure access URL')
+      }
+
+      // Open media in modal immediately
+      setViewOnceMedia({ message, signedUrl })
+
+      // Mark as viewed immediately to prevent re-access
+      await markMediaViewed(message.id)
+      setViewedMessages(prev => new Set([...prev, message.id]))
+
+      // Update message status in UI
+      setMessages(prev => prev.map(msg =>
+        msg.id === message.id
+          ? { ...msg, status: 'viewed' as const, media_url: null }
+          : msg
+      ))
+
+    } catch (err: any) {
+      console.error('Failed to handle view-once media:', err)
+
+      // If it's already viewed, update local state
+      if (err.message?.includes('already viewed')) {
+        setViewedMessages(prev => new Set([...prev, message.id]))
+      }
+
+      // Close modal on error
+      setViewOnceMedia(null)
+    }
+  }
+
+  const handleCloseViewOnceModal = () => {
+    // Clear the signed URL and close modal
+    setViewOnceMedia(null)
   }
 
   const handleFileUpload = async (file: File) => {
@@ -777,6 +817,7 @@ export default function ChatRoom() {
             onLongPress={handleMessageLongPress}
             onSlideReply={handleSlideToReply}
             onMediaView={handleMediaView}
+            viewedMessages={viewedMessages}
           />
         ))}
 
@@ -925,6 +966,98 @@ export default function ChatRoom() {
           ))}
         </div>
       </Modal>
+
+      {/* View-Once Media Modal */}
+      {viewOnceMedia && (
+        <div className="fixed inset-0 bg-black bg-opacity-95 flex items-center justify-center z-50 p-4">
+          <div className="relative max-w-full max-h-full">
+            {/* Close button */}
+            <button
+              onClick={handleCloseViewOnceModal}
+              className="absolute -top-12 right-0 text-white hover:text-gray-300 transition-colors bg-gray-800 rounded-full p-2"
+              title="Close and delete media"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
+            {/* Media content */}
+            <div className="bg-gray-900 rounded-lg overflow-hidden max-w-4xl max-h-[80vh] shadow-2xl">
+              {viewOnceMedia.message.message_type === 'image' ? (
+                <img
+                  src={viewOnceMedia.signedUrl}
+                  alt="View-once media"
+                  className="w-full h-auto max-h-[70vh] object-contain"
+                  onError={() => {
+                    console.error('Failed to load view-once image')
+                    handleCloseViewOnceModal()
+                  }}
+                  onLoad={() => {
+                    console.log('View-once image loaded successfully')
+                  }}
+                />
+              ) : (
+                <video
+                  src={viewOnceMedia.signedUrl}
+                  controls
+                  autoPlay
+                  className="w-full h-auto max-h-[70vh]"
+                  onError={() => {
+                    console.error('Failed to load view-once video')
+                    handleCloseViewOnceModal()
+                  }}
+                  onLoadedData={() => {
+                    console.log('View-once video loaded successfully')
+                  }}
+                />
+              )}
+
+              {/* Media info and warnings */}
+              <div className="p-4 bg-gray-800">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-2xl">
+                      {viewOnceMedia.message.participant?.avatar}
+                    </span>
+                    <span className="text-gray-200 font-medium">
+                      {viewOnceMedia.message.participant?.nickname}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    {new Date(viewOnceMedia.message.created_at).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </div>
+                </div>
+
+                {/* Security warnings */}
+                <div className="mt-3 space-y-1">
+                  <div className="text-xs text-red-400 font-medium flex items-center">
+                    <span className="mr-2">🔒</span>
+                    This media is view-once and will be permanently deleted
+                  </div>
+                  <div className="text-xs text-yellow-400 flex items-center">
+                    <span className="mr-2">⚠️</span>
+                    Close this view to complete deletion
+                  </div>
+                </div>
+
+                {/* Action buttons */}
+                <div className="mt-4 flex justify-end space-x-3">
+                  <button
+                    onClick={handleCloseViewOnceModal}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium"
+                  >
+                    Close & Delete Media
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   )

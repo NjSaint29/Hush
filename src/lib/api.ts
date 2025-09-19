@@ -494,7 +494,7 @@ export async function markMessagesAsRead(roomId: string): Promise<void> {
   }
 }
 
-// View-once Media
+// View-once Media - Enhanced Security
 export async function markMediaViewed(messageId: string): Promise<void> {
   const deviceId = getDeviceId()
 
@@ -505,42 +505,82 @@ export async function markMediaViewed(messageId: string): Promise<void> {
     .eq('device_id', deviceId)
     .single()
 
-  if (!participant) return
+  if (!participant) {
+    throw new Error('Participant not found')
+  }
 
-  // Check if message is view-once
+  // Check if message is view-once and get current view status
   const { data: message } = await supabase
     .from('messages')
-    .select('is_view_once, media_url')
+    .select('is_view_once, media_url, read_by')
     .eq('id', messageId)
     .single()
 
-  if (message?.is_view_once) {
-    // Mark as viewed
-    await markMessageAsRead(messageId)
+  if (!message?.is_view_once) {
+    throw new Error('Message is not view-once')
+  }
 
-    // For view-once media, delete the file from storage after viewing
-    if (message.media_url) {
-      try {
-        // Extract filename from URL
-        const urlParts = message.media_url.split('/')
-        const fileName = urlParts[urlParts.length - 1]
+  // Check if already viewed by this participant
+  if (message.read_by && message.read_by.includes(participant.id)) {
+    throw new Error('Media already viewed')
+  }
 
-        // Delete from storage
-        await supabase.storage
-          .from('media')
-          .remove([fileName])
+  // Mark as viewed in database
+  await markMessageAsRead(messageId)
 
-        // Update message to remove media_url
-        await supabase
-          .from('messages')
-          .update({ media_url: null })
-          .eq('id', messageId)
+  // For view-once media, delete the file from storage immediately after viewing
+  if (message.media_url) {
+    try {
+      // Extract filename from URL
+      const urlParts = message.media_url.split('/')
+      const fileName = urlParts[urlParts.length - 1]
 
-      } catch (error) {
-        console.error('Failed to delete view-once media:', error)
-      }
+      // Delete from storage to prevent re-access
+      await supabase.storage
+        .from('media')
+        .remove([fileName])
+
+      // Update message to remove media_url and mark as consumed
+      await supabase
+        .from('messages')
+        .update({
+          media_url: null,
+          status: 'viewed'
+        })
+        .eq('id', messageId)
+
+      console.log('View-once media deleted and marked as viewed')
+
+    } catch (error) {
+      console.error('Failed to delete view-once media:', error)
+      // Even if deletion fails, mark as viewed to prevent re-access attempts
+      await supabase
+        .from('messages')
+        .update({ status: 'viewed' })
+        .eq('id', messageId)
     }
   }
+}
+
+// Check if media has been viewed by current user
+export async function hasViewedMedia(messageId: string): Promise<boolean> {
+  const deviceId = getDeviceId()
+
+  const { data: participant } = await supabase
+    .from('participants')
+    .select('id')
+    .eq('device_id', deviceId)
+    .single()
+
+  if (!participant) return false
+
+  const { data: message } = await supabase
+    .from('messages')
+    .select('read_by')
+    .eq('id', messageId)
+    .single()
+
+  return message?.read_by?.includes(participant.id) || false
 }
 
 // Generate signed URL for view-once media
