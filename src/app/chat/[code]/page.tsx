@@ -19,6 +19,7 @@ import {
   markMessageAsRead,
   markMessagesAsRead,
   markMediaViewed,
+  getSignedMediaUrl,
   pollMessages,
   type Room,
   type Message,
@@ -129,27 +130,56 @@ function MessageBubble({ message, onReaction, onReply, onLongPress, onSlideReply
         {/* Media */}
         {message.media_url && (
           <div className="mt-2">
-            {message.is_view_once && !isOwn ? (
+            {message.status === 'pending' ? (
+              // Loading state for pending uploads
+              <div className="w-32 h-32 bg-gray-700 rounded-lg flex items-center justify-center">
+                <div className="flex flex-col items-center space-y-2">
+                  <div className="w-6 h-6 animate-spin rounded-full border-2 border-gray-400 border-t-transparent"></div>
+                  <span className="text-xs text-gray-400">Uploading...</span>
+                </div>
+              </div>
+            ) : message.is_view_once && !isOwn ? (
+              // View-once media for other users
               <div className="relative">
                 <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
                   <button
                     onClick={() => onMediaView(message)}
-                    className="bg-white text-black px-4 py-2 rounded-full font-medium"
+                    className="bg-white text-black px-4 py-2 rounded-full font-medium hover:bg-gray-100 transition-colors"
                   >
                     👁️ Tap to view
                   </button>
                 </div>
                 <div className="w-32 h-32 bg-gray-700 rounded-lg flex items-center justify-center">
-                  <span className="text-2xl">📷</span>
+                  <span className="text-2xl">
+                    {message.message_type === 'image' ? '📷' : '🎥'}
+                  </span>
                 </div>
               </div>
             ) : (
-              <img
-                src={message.media_url}
-                alt="Media"
-                className="rounded-lg max-w-full cursor-pointer"
-                onClick={() => message.is_view_once && onMediaView(message)}
-              />
+              // Regular media display
+              <div className="relative">
+                {message.message_type === 'image' ? (
+                  <img
+                    src={message.media_url}
+                    alt="Shared media"
+                    className="rounded-lg max-w-full cursor-pointer hover:opacity-90 transition-opacity"
+                    onClick={() => message.is_view_once && onMediaView(message)}
+                    loading="lazy"
+                  />
+                ) : (
+                  <video
+                    src={message.media_url}
+                    controls
+                    className="rounded-lg max-w-full"
+                    preload="metadata"
+                  />
+                )}
+                {message.is_view_once && isOwn && (
+                  <div className="absolute top-2 right-2 bg-black bg-opacity-75 text-white text-xs px-2 py-1 rounded">
+                    👁️ View-once
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -521,50 +551,127 @@ export default function ChatRoom() {
   const handleMediaView = async (message: Message) => {
     if (message.is_view_once && !viewedMessages.has(message.id)) {
       try {
-        await markMediaViewed(message.id)
-        setViewedMessages(prev => new Set([...prev, message.id]))
+        // For view-once media, generate a signed URL with short expiry
+        if (message.media_url) {
+          const urlParts = message.media_url.split('/')
+          const fileName = urlParts[urlParts.length - 1]
+
+          // Generate signed URL valid for 60 seconds
+          const signedUrl = await getSignedMediaUrl(fileName, 60)
+
+          if (signedUrl) {
+            // Replace the public URL with signed URL temporarily
+            const updatedMessage = { ...message, media_url: signedUrl }
+            setMessages(prev => prev.map(msg =>
+              msg.id === message.id ? updatedMessage : msg
+            ))
+
+            // Mark as viewed after a short delay to allow viewing
+            setTimeout(async () => {
+              await markMediaViewed(message.id)
+              setViewedMessages(prev => new Set([...prev, message.id]))
+            }, 2000) // 2 second delay to allow viewing
+          }
+        }
       } catch (err) {
-        console.error('Failed to mark media as viewed:', err)
+        console.error('Failed to handle view-once media:', err)
       }
     }
   }
 
-  const handleFileUpload = async (file: File, isViewOnce: boolean = false) => {
+  const handleFileUpload = async (file: File) => {
     if (!room) return
 
+    // Clear reply context
+    const replyId = replyTo?.id
+    setReplyTo(null)
+
+    // Generate unique filename
+    const fileExt = file.name.split('.').pop()
+    const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`
+    const filePath = `chat-media/${room.id}/${fileName}`
+
+    // Determine message type
+    const messageType = file.type.startsWith('image/') ? 'image' : 'video'
+
+    // Create optimistic media message (appears immediately)
+    const optimisticMessage: Message = {
+      id: `temp-media-${Date.now()}`,
+      room_id: room.id,
+      participant_id: localStorage.getItem('hush_device_id') || '',
+      content: null,
+      message_type: messageType,
+      media_url: null, // Will be set after upload
+      is_view_once: true, // All media is view-once
+      reply_to_id: replyId || null,
+      status: 'pending',
+      read_by: [],
+      created_at: new Date().toISOString(),
+      participant: {
+        id: localStorage.getItem('hush_device_id') || '',
+        room_id: room.id,
+        device_id: localStorage.getItem('hush_device_id') || '',
+        nickname: getUserProfile()?.nickname || 'You',
+        avatar: getUserProfile()?.avatar || '👤',
+        is_admin: false,
+        joined_at: new Date().toISOString(),
+        last_seen: new Date().toISOString()
+      }
+    }
+
+    // Add optimistic message to UI immediately
+    setMessages(prev => [...prev, optimisticMessage])
     setUploadingMedia(true)
+
     try {
-      // Upload file to Supabase Storage
-      const fileExt = file.name.split('.').pop()
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`
-      const filePath = `chat-media/${room.id}/${fileName}`
-
-      const { data: uploadData, error: uploadError } = await supabase.storage
+      // Upload file using Supabase standard upload pattern
+      const { data, error } = await supabase.storage
         .from('media')
-        .upload(filePath, file)
+        .upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: false
+        })
 
-      if (uploadError) throw uploadError
+      if (error) {
+        console.error('Upload error:', error)
+        throw new Error(`Upload failed: ${error.message}`)
+      }
+
+      console.log('Upload successful:', data)
 
       // Get public URL
       const { data: { publicUrl } } = supabase.storage
         .from('media')
         .getPublicUrl(filePath)
 
-      // Determine message type
-      const messageType = file.type.startsWith('image/') ? 'image' : 'video'
+      // Verify the URL is accessible
+      if (!publicUrl) {
+        throw new Error('Failed to generate public URL')
+      }
 
-      // Send message with media
-      await sendMessageWithStatus(
+      // Send message with media to database
+      const sentMessage = await sendMessageWithStatus(
         room.id,
         '', // No text content for media messages
         messageType,
         publicUrl,
-        isViewOnce,
-        replyTo?.id
+        true, // Always view-once
+        replyId
       )
 
-      setReplyTo(null)
+      // Replace optimistic message with real message
+      setMessages(prev => prev.map(msg =>
+        msg.id === optimisticMessage.id ? sentMessage : msg
+      ))
+
+      console.log('Media message sent successfully')
     } catch (err: any) {
+      console.error('File upload failed:', err)
+
+      // Remove failed optimistic message
+      setMessages(prev => prev.filter(msg => msg.id !== optimisticMessage.id))
+
+      // Show error
       setError(err.message || 'Failed to upload media')
     } finally {
       setUploadingMedia(false)
@@ -587,22 +694,13 @@ export default function ChatRoom() {
       return
     }
 
-    // Get view-once flag from data attribute
-    const isViewOnce = event.target.getAttribute('data-view-once') === 'true'
-
-    handleFileUpload(file, isViewOnce)
+    // Upload file immediately (all media is view-once)
+    handleFileUpload(file)
     event.target.value = '' // Reset input
-    event.target.removeAttribute('data-view-once') // Clean up
   }
 
   const handleMediaButtonClick = () => {
-    setShowMediaOptions(true)
-  }
-
-  const handleMediaOptionSelect = (isViewOnce: boolean) => {
-    setShowMediaOptions(false)
-    // We'll implement this when we add the media options modal
-    fileInputRef.current?.setAttribute('data-view-once', isViewOnce.toString())
+    // Directly open file picker (no options modal needed)
     fileInputRef.current?.click()
   }
 
@@ -718,7 +816,12 @@ export default function ChatRoom() {
                 </p>
               </div>
               <div className="text-sm text-gray-300 truncate">
-                {replyTo.content || (replyTo.media_url ? '📷 Photo' : 'Media')}
+                {replyTo.content ||
+                 (replyTo.media_url ?
+                   (replyTo.message_type === 'image' ? '📷 Photo' : '🎥 Video') :
+                   'Media'
+                 )
+                }
               </div>
             </div>
             <button
@@ -741,7 +844,7 @@ export default function ChatRoom() {
             onClick={handleMediaButtonClick}
             disabled={uploadingMedia}
             className="p-3 bg-gray-800 border border-gray-700 rounded-full text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors disabled:opacity-50"
-            title="Upload media"
+            title="Share view-once media"
           >
             {uploadingMedia ? (
               <div className="w-5 h-5 animate-spin rounded-full border-2 border-gray-400 border-t-transparent"></div>
@@ -759,6 +862,7 @@ export default function ChatRoom() {
             accept="image/*,video/*"
             onChange={handleFileSelect}
             className="hidden"
+            title="Select image or video to share (view-once)"
           />
 
           <input
@@ -822,44 +926,6 @@ export default function ChatRoom() {
         </div>
       </Modal>
 
-      {/* Media Options Modal */}
-      <Modal
-        isOpen={showMediaOptions}
-        onClose={() => setShowMediaOptions(false)}
-        title="Share Media"
-      >
-        <div className="space-y-4">
-          <button
-            onClick={() => handleMediaOptionSelect(false)}
-            className="w-full p-4 bg-gray-800 rounded-lg hover:bg-gray-700 transition-colors text-left"
-          >
-            <div className="flex items-center space-x-3">
-              <div className="text-2xl">📷</div>
-              <div>
-                <div className="font-medium text-gray-100">Regular Media</div>
-                <div className="text-sm text-gray-400">Visible to all participants</div>
-              </div>
-            </div>
-          </button>
-
-          <button
-            onClick={() => handleMediaOptionSelect(true)}
-            className="w-full p-4 bg-gray-800 rounded-lg hover:bg-gray-700 transition-colors text-left"
-          >
-            <div className="flex items-center space-x-3">
-              <div className="text-2xl">👁️</div>
-              <div>
-                <div className="font-medium text-gray-100">View-Once Media</div>
-                <div className="text-sm text-gray-400">Disappears after viewing</div>
-              </div>
-            </div>
-          </button>
-
-          <div className="text-xs text-gray-500 text-center">
-            Supports images and videos up to 10MB
-          </div>
-        </div>
-      </Modal>
     </div>
   )
 }

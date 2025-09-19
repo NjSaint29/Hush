@@ -510,7 +510,7 @@ export async function markMediaViewed(messageId: string): Promise<void> {
   // Check if message is view-once
   const { data: message } = await supabase
     .from('messages')
-    .select('is_view_once')
+    .select('is_view_once, media_url')
     .eq('id', messageId)
     .single()
 
@@ -518,8 +518,43 @@ export async function markMediaViewed(messageId: string): Promise<void> {
     // Mark as viewed
     await markMessageAsRead(messageId)
 
-    // For view-once media, we could delete the media URL after viewing
-    // But for now, we'll just track the view
+    // For view-once media, delete the file from storage after viewing
+    if (message.media_url) {
+      try {
+        // Extract filename from URL
+        const urlParts = message.media_url.split('/')
+        const fileName = urlParts[urlParts.length - 1]
+
+        // Delete from storage
+        await supabase.storage
+          .from('media')
+          .remove([fileName])
+
+        // Update message to remove media_url
+        await supabase
+          .from('messages')
+          .update({ media_url: null })
+          .eq('id', messageId)
+
+      } catch (error) {
+        console.error('Failed to delete view-once media:', error)
+      }
+    }
+  }
+}
+
+// Generate signed URL for view-once media
+export async function getSignedMediaUrl(fileName: string, expiresIn: number = 60): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.storage
+      .from('media')
+      .createSignedUrl(fileName, expiresIn)
+
+    if (error) throw error
+    return data.signedUrl
+  } catch (error) {
+    console.error('Failed to generate signed URL:', error)
+    return null
   }
 }
 
