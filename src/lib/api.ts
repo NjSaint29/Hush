@@ -208,6 +208,72 @@ export async function getMessages(roomId: string): Promise<Message[]> {
   return messages || []
 }
 
+// Download and cache media locally for view-once functionality
+export async function downloadAndCacheMedia(mediaUrl: string, messageId: string): Promise<string> {
+  try {
+    // Check if already cached
+    const cacheKey = `hush_media_${messageId}`
+    const cached = localStorage.getItem(cacheKey)
+    if (cached) {
+      return cached
+    }
+
+    // Download the media
+    const response = await fetch(mediaUrl)
+    if (!response.ok) {
+      throw new Error('Failed to download media')
+    }
+
+    // Convert to blob and create object URL
+    const blob = await response.blob()
+    const objectUrl = URL.createObjectURL(blob)
+
+    // Cache the object URL
+    localStorage.setItem(cacheKey, objectUrl)
+
+    return objectUrl
+  } catch (error) {
+    console.error('Failed to download and cache media:', error)
+    throw error
+  }
+}
+
+// Get cached media URL
+export function getCachedMediaUrl(messageId: string): string | null {
+  const cacheKey = `hush_media_${messageId}`
+  return localStorage.getItem(cacheKey)
+}
+
+// Clear cached media (for cleanup)
+export function clearCachedMedia(messageId: string): void {
+  const cacheKey = `hush_media_${messageId}`
+  const cachedUrl = localStorage.getItem(cacheKey)
+  if (cachedUrl) {
+    URL.revokeObjectURL(cachedUrl)
+    localStorage.removeItem(cacheKey)
+  }
+}
+
+// Get file size from URL (approximate)
+export async function getMediaFileSize(mediaUrl: string): Promise<string> {
+  try {
+    const response = await fetch(mediaUrl, { method: 'HEAD' })
+    const contentLength = response.headers.get('content-length')
+
+    if (contentLength) {
+      const sizeInBytes = parseInt(contentLength)
+      if (sizeInBytes < 1024) return `${sizeInBytes} B`
+      if (sizeInBytes < 1024 * 1024) return `${(sizeInBytes / 1024).toFixed(1)} KB`
+      return `${(sizeInBytes / (1024 * 1024)).toFixed(1)} MB`
+    }
+
+    return 'Unknown size'
+  } catch (error) {
+    console.error('Failed to get file size:', error)
+    return 'Unknown size'
+  }
+}
+
 export async function addReaction(messageId: string, emoji: string): Promise<void> {
   const deviceId = getDeviceId()
   
