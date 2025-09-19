@@ -5,15 +5,15 @@ import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { AvatarPicker } from '@/components/ui/AvatarPicker'
-import { joinRoom, getRoomByCode } from '@/lib/api'
+import { joinRoom, getRoomByCode, type Room } from '@/lib/api'
 import { getUserProfile, saveUserProfile } from '@/lib/supabase'
 
 export default function JoinRoom() {
   const params = useParams()
   const router = useRouter()
   const roomCode = params.code as string
-  
-  const [room, setRoom] = useState<any>(null)
+
+  const [room, setRoom] = useState<Room | null>(null)
   const [nickname, setNickname] = useState('')
   const [avatar, setAvatar] = useState('👤')
   const [loading, setLoading] = useState(true)
@@ -30,7 +30,7 @@ export default function JoinRoom() {
 
     // Load room info
     loadRoom()
-  }, [roomCode])
+  }, [roomCode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadRoom = async () => {
     try {
@@ -40,8 +40,9 @@ export default function JoinRoom() {
         return
       }
       setRoom(roomData)
-    } catch (err: any) {
-      setError(err.message || 'Failed to load room')
+    } catch (err: unknown) {
+      const error = err as Error
+      setError(error.message || 'Failed to load room')
     } finally {
       setLoading(false)
     }
@@ -65,8 +66,9 @@ export default function JoinRoom() {
       
       // Navigate to chat
       router.push(`/chat/${roomCode}`)
-    } catch (err: any) {
-      setError(err.message || 'Failed to join room')
+    } catch (err: unknown) {
+      const error = err as Error
+      setError(error.message || 'Failed to join room')
     } finally {
       setJoining(false)
     }
