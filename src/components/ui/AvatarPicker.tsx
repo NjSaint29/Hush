@@ -1,3 +1,4 @@
+
 'use client'
 
 import { useState } from 'react'
@@ -25,34 +26,30 @@ export function AvatarPicker({ value, onChange, label }: AvatarPickerProps) {
   return (
     <div className="space-y-2">
       {label && (
-        <label className="block text-sm font-medium text-gray-300">
+        <label className="block text-sm font-medium text-foreground/80">
           {label}
         </label>
       )}
       
       <div className="relative">
-        {/* Avatar Display */}
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
-          className="w-16 h-16 text-3xl rounded-full bg-gray-800 border-2 border-gray-700 hover:border-teal-500 transition-colors flex items-center justify-center"
+          className="w-16 h-16 text-3xl rounded-full bg-background border-2 border-border hover:border-primary transition-colors flex items-center justify-center"
         >
           {value}
         </button>
         
-        {/* Avatar Selection Grid */}
         {isOpen && (
           <>
-            {/* Backdrop */}
             <div 
               className="fixed inset-0 z-40" 
               onClick={() => setIsOpen(false)}
             />
             
-            {/* Selection Panel */}
-            <div className="absolute top-full left-0 mt-2 w-72 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 animate-in zoom-in-95 duration-200">
+            <div className="absolute top-full left-0 mt-2 w-72 bg-background border border-border rounded-xl shadow-lg z-50 animate-in zoom-in-95 duration-200">
               <div className="p-4">
-                <h3 className="text-sm font-medium text-gray-300 mb-3">Choose your avatar</h3>
+                <h3 className="text-sm font-medium text-foreground/80 mb-3">Choose your avatar</h3>
                 <div className="grid grid-cols-8 gap-2">
                   {AVATAR_OPTIONS.map((avatar) => (
                     <button
@@ -60,8 +57,8 @@ export function AvatarPicker({ value, onChange, label }: AvatarPickerProps) {
                       onClick={() => handleAvatarSelect(avatar)}
                       className={`
                         w-8 h-8 text-xl rounded-lg transition-all
-                        hover:bg-gray-800 hover:scale-110
-                        ${value === avatar ? 'bg-teal-500 scale-110' : ''}
+                        hover:bg-secondary hover:scale-110
+                        ${value === avatar ? 'bg-primary text-white scale-110' : ''}
                         flex items-center justify-center
                       `}
                     >

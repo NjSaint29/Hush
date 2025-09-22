@@ -1,3 +1,4 @@
+
 import { ButtonHTMLAttributes, ReactNode } from 'react'
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -17,8 +18,8 @@ export function Button({
   const baseClasses = 'font-medium rounded-lg transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100'
   
   const variants = {
-    primary: 'bg-teal-500 hover:bg-teal-600 text-white shadow-lg hover:shadow-xl',
-    secondary: 'bg-gray-700 hover:bg-gray-600 text-gray-100 border border-gray-600',
+    primary: 'bg-primary text-white hover:bg-primary/90',
+    secondary: 'bg-secondary text-foreground hover:bg-secondary/90 border border-border',
     danger: 'bg-red-500 hover:bg-red-600 text-white'
   }
   

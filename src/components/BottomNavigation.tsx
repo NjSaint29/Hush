@@ -1,3 +1,4 @@
+
 'use client'
 
 import { ReactNode } from 'react'
@@ -15,15 +16,15 @@ function Tab({ label, icon, isActive, onClick }: TabProps) {
     <button
       onClick={onClick}
       className={`
-        flex flex-col items-center justify-center p-3 min-h-[68px]
-        transition-all duration-200 active:scale-95
+        flex flex-col items-center justify-center p-2 w-full
+        transition-colors duration-200
         ${isActive 
-          ? 'text-teal-400' 
-          : 'text-gray-500 hover:text-gray-300'
+          ? 'text-primary' 
+          : 'text-foreground/60 hover:text-foreground'
         }
       `}
     >
-      <div className={`text-xl mb-1 ${isActive ? 'animate-pulse' : ''}`}>
+      <div className="text-xl mb-1">
         {icon}
       </div>
       <span className="text-xs font-medium">
@@ -71,7 +72,7 @@ export function BottomNavigation({ activeTab, onTabChange }: BottomNavigationPro
   ]
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-gray-900 border-t border-gray-800 safe-area-inset-bottom">
+    <div className="fixed bottom-0 left-0 right-0 bg-background border-t border-border shadow-[0_-1px_3px_0_rgba(0,0,0,0.05)] safe-area-inset-bottom">
       <div className="flex">
         {tabs.map((tab) => (
           <div key={tab.id} className="flex-1">
