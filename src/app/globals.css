@@ -1,23 +1,6 @@
+@import "tailwindcss";
+@import "autoprefixer";
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-:root {
-  --background-rgb: 248 250 252;
-  --foreground-rgb: 15 23 42;
-  --primary-rgb: 37 99 235;
-  --secondary-rgb: 226 232 240;
-  --border-rgb: 203 213 225;
-}
-
-body {
-  color: rgb(var(--foreground-rgb));
-  background: rgb(var(--background-rgb));
-}
-
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
-}

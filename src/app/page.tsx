@@ -37,7 +37,7 @@ export default function Home() {
       <div className="flex-1 pb-20 overflow-hidden">
         {activeTab === 'chats' && <ChatsScreen />}
         {activeTab === 'create' && <CreateScreen />}
-        {activeTAb === 'settings' && (
+        {activeTab === 'settings' && (
           <SettingsScreen 
             userProfile={userProfile}
             onProfileUpdate={setUserProfile}

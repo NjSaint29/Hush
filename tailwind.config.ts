@@ -1,5 +1,6 @@
 
 import type { Config } from "tailwindcss";
+import tailwindcss from "@tailwindcss/postcss";
 
 const config: Config = {
   content: [
@@ -18,6 +19,6 @@ const config: Config = {
       },
     },
   },
-  plugins: [],
+  plugins: [tailwindcss],
 };
 export default config;
