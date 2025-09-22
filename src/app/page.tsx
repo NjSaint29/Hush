@@ -1,3 +1,4 @@
+
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -14,17 +15,15 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    // Check if user has a profile set up
     const profile = getUserProfile()
     setUserProfile(profile)
     setIsLoading(false)
   }, [])
 
-  // Show profile setup for first-time users
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <div className="text-4xl animate-spin">💫</div>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-4xl animate-spin text-primary">💫</div>
       </div>
     )
   }
@@ -33,14 +32,12 @@ export default function Home() {
     return <ProfileSetup onComplete={setUserProfile} />
   }
 
-  // Main app interface
   return (
-    <div className="min-h-screen bg-gray-950 flex flex-col">
-      {/* Main Content */}
+    <div className="min-h-screen bg-background flex flex-col">
       <div className="flex-1 pb-20 overflow-hidden">
         {activeTab === 'chats' && <ChatsScreen />}
         {activeTab === 'create' && <CreateScreen />}
-        {activeTab === 'settings' && (
+        {activeTAb === 'settings' && (
           <SettingsScreen 
             userProfile={userProfile}
             onProfileUpdate={setUserProfile}
@@ -48,7 +45,6 @@ export default function Home() {
         )}
       </div>
 
-      {/* Bottom Navigation */}
       <BottomNavigation 
         activeTab={activeTab} 
         onTabChange={setActiveTab} 
