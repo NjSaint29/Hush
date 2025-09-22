@@ -1,3 +1,4 @@
+
 'use client'
 
 import { useState } from 'react'
@@ -47,9 +48,7 @@ export function CreateScreen() {
   const copyRoomLink = () => {
     if (createdRoom) {
       const link = `${window.location.origin}/join/${createdRoom.room_code}`
-      navigator.clipboard.writeText(link).then(() => {
-        // Could add a toast notification here
-      })
+      navigator.clipboard.writeText(link)
     }
   }
 
@@ -67,32 +66,26 @@ export function CreateScreen() {
   }
 
   return (
-    <div className="flex-1 flex flex-col">
-      {/* Header */}
-      <div className="p-6 border-b border-gray-800">
-        <h1 className="text-2xl font-bold text-gray-100 flex items-center">
-          <span className="mr-3">✨</span>
+    <div className="flex-1 flex flex-col h-full">
+      <div className="p-6 border-b border-border">
+        <h1 className="text-2xl font-bold text-foreground">
           Create Room
         </h1>
-        <p className="text-gray-400 mt-1">
+        <p className="text-foreground/80 mt-1">
           Start a new 24-hour anonymous chat
         </p>
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-md mx-auto space-y-8">
-          {/* Room Preview */}
           <div className="text-center">
             <div className="text-8xl mb-4">{roomEmoji}</div>
-            <h3 className="text-xl font-semibold text-gray-100">
+            <h3 className="text-xl font-semibold text-foreground">
               {roomName || 'Room Name'}
             </h3>
           </div>
 
-          {/* Form */}
           <div className="space-y-6">
-            {/* Room Name */}
             <Input
               label="Room Name"
               value={roomName}
@@ -102,14 +95,12 @@ export function CreateScreen() {
               maxLength={50}
             />
 
-            {/* Emoji Picker */}
             <EmojiPicker
               value={roomEmoji}
               onChange={setRoomEmoji}
               label="Room Emoji"
             />
 
-            {/* Create Button */}
             <Button
               onClick={handleCreate}
               disabled={loading || !roomName.trim()}
@@ -117,56 +108,54 @@ export function CreateScreen() {
               size="lg"
             >
               {loading ? (
-                <div className="flex items-center">
-                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin mr-3" />
+                <div className="flex items-center justify-center">
+                  <div className="w-5 h-5 border-2 border-foreground/20 border-t-foreground rounded-full animate-spin mr-3" />
                   Creating...
                 </div>
               ) : (
-                'Create Room ✨'
+                'Create Room'
               )}
             </Button>
 
-            {/* Error Display */}
             {error && !error.includes('name') && (
-              <div className="bg-red-900/20 border border-red-800 rounded-xl p-4 text-center">
-                <p className="text-red-400 text-sm">{error}</p>
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-center">
+                <p className="text-red-600 text-sm">{error}</p>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Success Modal */}
       <Modal
         isOpen={showSuccess}
         onClose={() => setShowSuccess(false)}
-        title="Room Created! 🎉"
+        title="Room Created!"
       >
         {createdRoom && (
           <div className="space-y-6 text-center">
             <div className="space-y-2">
               <div className="text-4xl">{createdRoom.emoji}</div>
-              <h3 className="text-xl font-semibold text-gray-100">
+              <h3 className="text-xl font-semibold text-foreground">
                 {createdRoom.name}
               </h3>
-              <p className="text-gray-400">
-                Room Code: <span className="font-mono text-teal-400">{createdRoom.room_code}</span>
+              <p className="text-foreground/60">
+                Code: <span className="font-mono text-primary">{createdRoom.room_code}</span>
               </p>
             </div>
 
             <div className="space-y-3">
               <Button onClick={shareRoom} className="w-full">
-                Share Room Link 📤
+                Share Link
               </Button>
               <Button onClick={copyRoomLink} variant="secondary" className="w-full">
-                Copy Link 📋
+                Copy Link
               </Button>
               <Button 
                 onClick={() => window.location.href = `/chat/${createdRoom.room_code}`}
                 variant="secondary" 
                 className="w-full"
               >
-                Enter Room 🚀
+                Enter Room
               </Button>
             </div>
           </div>

@@ -1,3 +1,4 @@
+
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -42,32 +43,28 @@ function RoomCard({ room }: { room: Room }) {
   return (
     <div 
       onClick={handleRoomClick}
-      className="bg-gray-900 border border-gray-800 rounded-xl p-4 cursor-pointer hover:bg-gray-850 transition-colors active:scale-98"
+      className="bg-background border border-border rounded-lg p-4 cursor-pointer hover:bg-secondary transition-colors active:scale-98"
     >
       <div className="flex items-center space-x-4">
-        {/* Room Emoji with Countdown Ring */}
         <div className="relative">
-          <div className="w-12 h-12 text-2xl bg-gray-800 rounded-full flex items-center justify-center">
+          <div className="w-12 h-12 text-2xl bg-secondary rounded-full flex items-center justify-center">
             {room.emoji}
           </div>
-          {/* Simple countdown indicator */}
-          <div className={`absolute -top-1 -right-1 w-4 h-4 rounded-full ${
-            timeLeft.includes('s') ? 'bg-red-500 animate-pulse' : 'bg-teal-500'
+          <div className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 border-background ${
+            timeLeft.includes('s') ? 'bg-red-500' : 'bg-primary'
           }`} />
         </div>
 
-        {/* Room Info */}
         <div className="flex-1">
-          <h3 className="font-semibold text-gray-100 truncate">
+          <h3 className="font-semibold text-foreground truncate">
             {room.name}
           </h3>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-foreground/60">
             Expires in {timeLeft}
           </p>
         </div>
 
-        {/* Arrow */}
-        <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-5 h-5 text-foreground/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
       </div>
@@ -99,32 +96,29 @@ export function ChatsScreen() {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center space-y-4">
-          <div className="text-4xl animate-spin">💫</div>
-          <p className="text-gray-400">Loading your chats...</p>
+          <div className="text-4xl animate-spin text-primary">💫</div>
+          <p className="text-foreground/60">Loading your chats...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="flex-1 flex flex-col">
-      {/* Header */}
-      <div className="p-6 border-b border-gray-800">
-        <h1 className="text-2xl font-bold text-gray-100 flex items-center">
-          <span className="mr-3">💬</span>
+    <div className="flex-1 flex flex-col h-full">
+      <div className="p-6 border-b border-border">
+        <h1 className="text-2xl font-bold text-foreground">
           Your Chats
         </h1>
-        <p className="text-gray-400 mt-1">
+        <p className="text-foreground/80 mt-1">
           Active anonymous chatrooms
         </p>
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-y-auto">
         {error && (
           <div className="p-4">
-            <div className="bg-red-900/20 border border-red-800 rounded-xl p-4 text-center">
-              <p className="text-red-400">{error}</p>
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+              <p className="text-red-600">{error}</p>
               <Button onClick={loadRooms} variant="secondary" size="sm" className="mt-3">
                 Try Again
               </Button>
@@ -135,9 +129,10 @@ export function ChatsScreen() {
         {rooms.length === 0 && !error ? (
           <div className="flex-1 flex items-center justify-center p-8">
             <div className="text-center space-y-4">
-              <div className="text-6xl">🏠</div>
-              <h3 className="text-xl font-semibold text-gray-300">No active chats</h3>
-              <p className="text-gray-500">
+              <h3 className="text-xl font-semibold text-foreground">
+                No active chats
+              </h3>
+              <p className="text-foreground/60">
                 Create a room or join one with a link!
               </p>
             </div>
